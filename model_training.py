@@ -11,16 +11,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, StackingRegressor, VotingRegressor
 from xgboost import XGBRegressor
 import lightgbm as lgb
-from sklearn.linear model import BayesianRidge
+from sklearn.linear_model import BayesianRidge
 import numpy as np
 import math
 from sklearn.pipeline import make_pipeline
 
 
-excel_file = r'data.xlsx'
+excel_file = r'Diazo_group_data.xlsx'
 df = pd.read_excel(excel_file)
 
-def process_smiles(smiles_str):
+def Diazo_process_smiles(smiles_str):
+    
     try:
         mol = Chem.MolFromSmiles(smiles_str)
         mol = Chem.AddHs(mol)
@@ -39,6 +40,80 @@ def process_smiles(smiles_str):
 
         # Find other atoms connected to the carbon, excluding N+
         connected_atoms = [neighbor for neighbor in carbon.GetNeighbors() if neighbor.GetIdx() != nplus.GetIdx()]
+
+        # Priority order for connected atoms
+        priority_order = [
+            ('Cl', 'SINGLE'), ('S', 'AROMATIC'), ('S', 'SINGLE'), ('F', 'SINGLE'),
+            ('O', 'AROMATIC'), ('O', 'DOUBLE'), ('O', 'SINGLE'),
+            ('N', 'TRIPLE'), ('N', 'AROMATIC'), ('N', 'DOUBLE'), ('N', 'SINGLE'),
+            ('C', 'TRIPLE'), ('C', 'AROMATIC'), ('C', 'DOUBLE'), ('C', 'SINGLE'),
+            ('H', 'SINGLE')
+        ]
+
+        # Create a list to store atom atomic number and connections
+        connections_list = []
+        for atom in connected_atoms:
+            atomic_num = atom.GetAtomicNum()
+            connected_atom_symbol = atom.GetSymbol()
+            neighbors_info = []
+            for neighbor in atom.GetNeighbors():
+                if neighbor.GetIdx() != carbon.GetIdx():
+                    neighbor_symbol = neighbor.GetSymbol()
+                    bond = mol.GetBondBetweenAtoms(atom.GetIdx(), neighbor.GetIdx())
+                    bond_type_str = str(bond.GetBondType())
+                    neighbors_info.append((neighbor_symbol, bond_type_str))
+
+            connections_dict = {'atomic_num': atomic_num, 'connections': {connected_atom_symbol: neighbors_info}}
+            connections_list.append(connections_dict)
+
+        # Determine R1 and R2 based on atomic number and connection priority
+        connections_list.sort(key=lambda x: x['atomic_num'], reverse=True)
+        if len(connections_list) > 1 and connections_list[0]['atomic_num'] == connections_list[1]['atomic_num']:
+            # If atomic numbers are the same, sort by connection priority
+            connections_list.sort(key=lambda x: min(priority_order.index(y) if y in priority_order else len(priority_order)
+                                                    for y in [item for sublist in x['connections'].values() for item in sublist]))
+
+        R1, R2 = connections_list[0], connections_list[1] if len(connections_list) > 1 else None
+        atomic_number_R1 = R1['atomic_num']
+        atomic_number_R2 = R2['atomic_num'] if R2 else None
+
+        return R1, R2, atomic_number_R1, atomic_number_R2
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None, None, None, None
+
+def carbonyl_process_smiles(smiles_str):
+
+    try:
+        mol = Chem.MolFromSmiles(smiles_str)
+        mol = Chem.AddHs(mol)
+
+        # Find the carbonyl group
+        carbonyl_atom = None
+        for atom in mol.GetAtoms():
+            if atom.GetSymbol() == "C":
+                for neighbor in atom.GetNeighbors():
+                    if neighbor.GetSymbol() == "O" and neighbor.GetTotalNumHs() == 0:
+                        carbonyl_atom = neighbor
+                        break
+            if carbonyl_atom:
+                break
+
+        if not carbonyl_atom:
+            return None, None, None, None
+
+        # Find the carbon atom connected to the carbonyl group
+        # Find the carbon atom connected to the carbonyl group
+        carbon_neighbors = [neighbor for neighbor in carbonyl_atom.GetNeighbors() if neighbor.GetSymbol() == "C"]
+        if not carbon_neighbors:
+            return "NoCarbonFound", None, None, None
+        carbon = carbon_neighbors[0]
+
+
+        # Find other atoms connected to the carbon
+        connected_atoms = [neighbor for neighbor in carbon.GetNeighbors() if neighbor.GetIdx() != carbonyl_atom.GetIdx()]
+
 
         # Priority order for connected atoms
         priority_order = [
@@ -101,9 +176,9 @@ def Feature_Engineering():
 
     for index, row in df.iterrows():
         smiles_str = row['SMILES']
-        R1, R2, atomic_number_R1, atomic_number_R2 = process_smiles(smiles_str)
+        R1, R2, atomic_number_R1, atomic_number_R2 = Diazo_process_smiles(smiles_str)#here to process target FG
         # 初始化计数字典
-        counts = {'R1' : R1, 'R2' : R2, 'atomic_number_R1': atomic_number_R1, 'atomic_number_R2': atomic_number_R2, 'SMILES': smiles_str, 'N2_IR_Characteristic_Peak': row['N2_IR_Characteristic_Peak'], 'File Name' : row['File Name'], 'name': row['name'], 'Corresponding Author': row['Corresponding Author']}
+        counts = {'R1' : R1, 'R2' : R2, 'atomic_number_R1': atomic_number_R1, 'atomic_number_R2': atomic_number_R2, 'SMILES': smiles_str, 'IR_Characteristic_Peak': row['IR_Characteristic_Peak'], 'DOI' : row['DOI'], 'IUPAC_NAME': row['IUPAC_NAME']}
         counts.update({col: 0 for col in possible_columns})
 
 
@@ -191,7 +266,7 @@ def add_noise(data, noise_level):
 
 def Model_construction():
     df = Feature_Engineering()
-    y = df['N2_IR_Characteristic_Peak'].values - 2104
+    y = df['IR_Characteristic_Peak'].values
 
     feature = ['electronegativity_R1', 'electronegativity_R2', 'covalent_radius_R1', 'covalent_radius_R2',
                'Cl_SINGLE_R1', 'Cl_SINGLE_R2',
@@ -209,7 +284,7 @@ def Model_construction():
     all_features = feature + Morgan_features
     X = df[all_features].values
 
-    # 分割训练集和测试集
+
     X_train_val, X_test, y_train_val, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
 
     scaler = StandardScaler()
@@ -262,7 +337,6 @@ def Model_construction():
 
         print(f'{model_name} - Mean RMSE: {np.mean(rmse_scores)}, Mean R2: {np.mean(r2_scores)}')
 
-        # 最终测试集评估
         model.fit(X_train_val, y_train_val)
         y_test_pred = model.predict(X_test)
         rmse_test = mean_squared_error(y_test, y_test_pred, squared=False)
