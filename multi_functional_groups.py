@@ -4,9 +4,77 @@ from sklearn.metrics import mean_squared_error, r2_score
 from rdkit.Chem import AllChem
 import joblib
 import numpy as np
-from catboost import CatBoostRegressor
 
-def process_smiles(smiles_str):
+def mulit_diazo_process_smiles(smiles_str):
+    try:
+        mol = Chem.MolFromSmiles(smiles_str)
+        mol = Chem.AddHs(mol)
+
+        # Find the custom group atoms (e.g., positively charged nitrogen atom, N+)
+        custom_group_atoms = [atom.GetIdx() for atom in mol.GetAtoms() if atom.GetFormalCharge() == 1]
+        if not custom_group_atoms:
+            return []
+
+        results = []
+
+        for atom_idx in custom_group_atoms:
+            custom_group = mol.GetAtomWithIdx(atom_idx)
+
+            # Find the carbon atom connected to the custom group
+            carbon_neighbors = [neighbor for neighbor in custom_group.GetNeighbors() if neighbor.GetSymbol() == "C"]
+            if not carbon_neighbors:
+                continue  # Skip if no connected carbon atom is found
+            carbon = carbon_neighbors[0]
+
+            # Find other atoms connected to the carbon, excluding the custom group
+            connected_atoms = [neighbor for neighbor in carbon.GetNeighbors() if neighbor.GetIdx() != custom_group.GetIdx()]
+
+            # Priority order for connected atoms
+            priority_order = [
+                ('Cl', 'SINGLE'), ('S', 'AROMATIC'), ('S', 'SINGLE'), ('F', 'SINGLE'),
+                ('O', 'AROMATIC'), ('O', 'DOUBLE'), ('O', 'SINGLE'),
+                ('N', 'TRIPLE'), ('N', 'AROMATIC'), ('N', 'DOUBLE'), ('N', 'SINGLE'),
+                ('C', 'TRIPLE'), ('C', 'AROMATIC'), ('C', 'DOUBLE'), ('C', 'SINGLE'),
+                ('H', 'SINGLE')
+            ]
+
+            # Create a list to store atom atomic number and connections
+            connections_list = []
+            for atom in connected_atoms:
+                atomic_num = atom.GetAtomicNum()
+                connected_atom_symbol = atom.GetSymbol()
+                neighbors_info = []
+                for neighbor in atom.GetNeighbors():
+                    if neighbor.GetIdx() != carbon.GetIdx():
+                        neighbor_symbol = neighbor.GetSymbol()
+                        bond = mol.GetBondBetweenAtoms(atom.GetIdx(), neighbor.GetIdx())
+                        bond_type_str = str(bond.GetBondType())
+                        neighbors_info.append((neighbor_symbol, bond_type_str))
+
+                connections_dict = {'atomic_num': atomic_num, 'connections': {connected_atom_symbol: neighbors_info}}
+                connections_list.append(connections_dict)
+
+            # Determine R1 and R2 based on atomic number and connection priority
+            connections_list.sort(key=lambda x: x['atomic_num'], reverse=True)
+            if len(connections_list) > 1 and connections_list[0]['atomic_num'] == connections_list[1]['atomic_num']:
+                # If atomic numbers are the same, sort by connection priority
+                connections_list.sort(key=lambda x: min(priority_order.index(y) if y in priority_order else len(priority_order)
+                                                        for y in [item for sublist in x['connections'].values() for item in sublist]))
+
+            R1, R2 = connections_list[0], connections_list[1] if len(connections_list) > 1 else None
+            atomic_number_R1 = R1['atomic_num']
+            atomic_number_R2 = R2['atomic_num'] if R2 else None
+
+            results.append({'R1': R1, 'R2': R2, 'atomic_number_R1': atomic_number_R1, 'atomic_number_R2': atomic_number_R2})
+
+        return results
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+
+
+def mutli_carbonyl_process_smiles(smiles_str):
     try:
         mol = Chem.MolFromSmiles(smiles_str)
         mol = Chem.AddHs(mol)
@@ -89,19 +157,20 @@ def calculate_morgan_fingerprint(smiles, n_bits=2048):
     return list(fp)
 
 def Feature_Engineering(df):
-    possible_columns = ['I_SINGLE_R1', 'I_SINGLE_R2', 'Br_SINGLE_R1', 'Br_SINGLE_R2',
-        'Cl_SINGLE_R1', 'Cl_SINGLE_R2', 'S_AROMATIC_R1', 'S_AROMATIC_R2', 'S_SINGLE_R1', 'S_SINGLE_R2', 'P_SINGLE_R1', 'P_SINGLE_R2',
+    possible_columns = [
+        'Cl_SINGLE_R1', 'Cl_SINGLE_R2', 'S_AROMATIC_R1', 'S_AROMATIC_R2', 'S_SINGLE_R1', 'S_SINGLE_R2',
          'F_SINGLE_R1',  'F_SINGLE_R2', 'O_AROMATIC_R1', 'O_AROMATIC_R2', 'O_DOUBLE_R1', 'O_DOUBLE_R2', 'O_SINGLE_R1', 'O_SINGLE_R2',
         'N_TRIPLE_R2', 'N_TRIPLE_R1', 'N_AROMATIC_R1', 'N_AROMATIC_R2', 'N_DOUBLE_R1', 'N_DOUBLE_R2', 'N_SINGLE_R1', 'N_SINGLE_R2',
          'C_TRIPLE_R1', 'C_TRIPLE_R2', 'C_AROMATIC_R2', 'C_AROMATIC_R1',  'C_DOUBLE_R1',  'C_DOUBLE_R2',  'C_SINGLE_R1', 'C_SINGLE_R2',
           'H_SINGLE_R1', 'H_SINGLE_R2'
+
     ]
 
     results = []
     for index, row in df.iterrows():
         smiles_str = row['SMILES']
         try:
-            custom_groups = process_smiles(smiles_str)
+            custom_groups = mutli_carbonyl_process_smiles(smiles_str)
             if not custom_groups:  # Skip if no custom groups were found
                 continue
 
@@ -111,8 +180,7 @@ def Feature_Engineering(df):
 
                 # Initialize counts dictionary
                 counts = {'R1': R1, 'R2': R2, 'atomic_number_R1': atomic_number_R1, 'atomic_number_R2': atomic_number_R2,
-                          'SMILES': smiles_str, 'N2_IR_Characteristic_Peak': row['SMILES'],
-                          'File Name': row['SMILES'], 'name': row['SMILES'], 'Corresponding Author': row['SMILES']}
+                          'SMILES': smiles_str
                 counts.update({col: 0 for col in possible_columns})
 
                 fingerprint = calculate_morgan_fingerprint(smiles_str)
@@ -159,8 +227,6 @@ def Feature_Engineering(df):
 
 def predict_new_data(model_path, scaler_path, new_data_path, features, target_column):
     try:
-        # Load the new data
-
         new_data = Feature_Engineering(df)
         print("Total number of rows in the data:", len(new_data))
     except FileNotFoundError:
@@ -209,14 +275,12 @@ def predict_new_data(model_path, scaler_path, new_data_path, features, target_co
 
     return output_data
 feature = ['electronegativity_R1', 'electronegativity_R2', 'covalent_radius_R1', 'covalent_radius_R2',
-
-                'Cl_SINGLE_R1', 'Cl_SINGLE_R2',
+               'Cl_SINGLE_R1', 'Cl_SINGLE_R2',
                'S_AROMATIC_R1', 'S_AROMATIC_R2', 'S_SINGLE_R1', 'S_SINGLE_R2',
-                'P_SINGLE_R1', 'P_SINGLE_R2',
-               'O_AROMATIC_R1', 'O_AROMATIC_R2',
+               'F_SINGLE_R1', 'F_SINGLE_R2', 'O_AROMATIC_R1', 'O_AROMATIC_R2', 'O_DOUBLE_R1', 'O_DOUBLE_R2',
                'O_SINGLE_R1', 'O_SINGLE_R2',
-               'N_AROMATIC_R1', 'N_AROMATIC_R2', 'N_DOUBLE_R1', 'N_DOUBLE_R2',
-
+               'N_TRIPLE_R2', 'N_TRIPLE_R1', 'N_AROMATIC_R1', 'N_AROMATIC_R2', 'N_DOUBLE_R1', 'N_DOUBLE_R2',
+               'N_SINGLE_R1', 'N_SINGLE_R2',
                'C_TRIPLE_R1', 'C_TRIPLE_R2', 'C_AROMATIC_R2', 'C_AROMATIC_R1', 'C_DOUBLE_R1', 'C_DOUBLE_R2',
                'C_SINGLE_R1', 'C_SINGLE_R2',
                'H_SINGLE_R1', 'H_SINGLE_R2'
@@ -225,12 +289,12 @@ Morgan_features = [f'Fingerprint_{i}' for i in range(2048)]
 all_features = feature + Morgan_features
 target_column = 'N2_IR_Characteristic_Peak'
 
-data = {'SMILES': ['CC(C(C1=CC=CC=C1)=O)=O']}
+data = {'SMILES': ['CC(C(C)=O)=[N+]=[N-]']}
 df = pd.DataFrame(data)
 print(df)
 
-model_path = r'/content/Train.joblib'
-scaler_path = r'/content/scaler.joblib'
+model_path = r'Train.joblib'
+scaler_path = r'scaler.joblib'
 
 
 df = predict_new_data(model_path, scaler_path, df, all_features, target_column)
