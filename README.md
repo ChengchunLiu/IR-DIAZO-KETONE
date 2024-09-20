@@ -1,6 +1,6 @@
 # IR-DIAZO-KETONE
 
-This repository corresponds to the [Infrared Spectra Prediction for Diazo Groups Utilizing a Machine Learning Approach with Structural Attention Mechanism](https://arxiv.org/abs/2402.03112).
+This repository corresponds to the research article [Infrared Spectra Prediction for Functional Group Region Utilizing a Machine Learning Approach with Structural Neighboring Mechanism](https://pubs.acs.org/doi/10.1021/acs.analchem.4c01972). The project explores advanced machine learning techniques to predict the infrared spectra for functional groups, focusing on a novel structural neighboring mechanism.
 
 ## Python Version
 
