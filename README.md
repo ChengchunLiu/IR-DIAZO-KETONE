@@ -28,7 +28,7 @@ To install these libraries, use the following pip commands:
 
 ```bash
 pip install rdkit==2023.9.5
-pip install scikit-learn==1.4.1
+pip install scikit-learn==1.4.0
 pip install matplotlib==3.8.4
 pip install shap==0.45.0
 pip install xgboost==2.0.3
