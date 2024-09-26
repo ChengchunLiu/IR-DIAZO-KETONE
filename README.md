@@ -10,7 +10,7 @@ This project requires Python (Version 3.11.4).
 
 - **RDKit (Version 2023.9.5)**: RDKit is a collection of cheminformatics and machine learning tools that provide functionalities for handling chemical informatics tasks such as molecule generation, molecular descriptors, and visualization.
 
-- **scikit-learn (Version 1.4.1)**: A robust library for machine learning in Python, providing simple and efficient tools for data mining and data analysis. It is built on NumPy, SciPy, and matplotlib.
+- **scikit-learn (Version 1.4.0)**: A robust library for machine learning in Python, providing simple and efficient tools for data mining and data analysis. It is built on NumPy, SciPy, and matplotlib.
 
 - **matplotlib (Version 3.8.4)**: A comprehensive library for creating static, animated, and interactive visualizations in Python. It is highly customizable and used for generating publication-quality plots.
 
